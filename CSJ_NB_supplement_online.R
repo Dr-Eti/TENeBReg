@@ -1,9 +1,12 @@
-## Online Supplement to manuscript
-## Submitted to Canadian J Statistics
-##
+## Online Supplement to manuscript Counting on count regression: a reexamination of routinely-cited negative binomial specifications
+
 ## 07 / 2026 
 ## 08 / 2026 (add zero truncation)
+## 09 / 2026 add countreg; IRRs; and derivatives wrt log alpha or log theta
 
+## -- [on first run] countreg installation (not CRAN)        ####
+#install.packages("countreg", repos = "https://zeileis.R-universe.dev")
+## Input prep
 ## Input prep
 ## -- load functions for auxiliary Poisson regression        ####
 source("aux_functions/aux_Pois_fun_ZT.R")   
@@ -13,20 +16,6 @@ source("aux_functions/aux_Pois_fun_ZT.R")
 mypath <- "./data"
 myData <- read.csv(paste0(mypath, "/TAS_NB_example_ZT.csv", collapse = " "), header = TRUE, row.names=1)
 
-
-
-## -- OPTIONAL: ALTER DATA to an even simpler example        ####
-
-# newCol <- myData$g_SUBJECTS/myData$g_CENTRES
-# newT <- myData$d_TIME_offset/12
-# 
-# myData_old <- myData
-# # myData <- cbind.data.frame(myData$b_IS_BIO, newT, newCol, myData$g_DISRUPTIONS)
-# # colnames(myData) <- c("b_IS_BIO", "d_TIME_offset", "g_SubCent_ratio", "g_DISRUPTIONS")
-# 
-# myData <- cbind.data.frame(newT, newCol, myData$g_DISRUPTIONS)
-# colnames(myData) <- c("d_TIME_offset", "g_SubCent_ratio", "g_DISRUPTIONS")
-# 
 
 
 ##                                                           ####
@@ -403,18 +392,17 @@ gradient_NB_theta <- function(y, p_alpha, p_lambda, rate_param = FALSE, offset_f
   }
   a <- (-1/p_theta^2)*(digamma(y + p_alpha) - alpha_digam)
   b <- 1 + p_theta*p_lambda
-  b <- (-1/p_theta^2)*log(b)
-  c <- (y - p_lambda) / (p_theta*b)
+  c <- (p_alpha^2)*log(b)
+  d <- (y - p_lambda) / (p_theta*b)
   if(zerotrunc){
     phi <- 1/b^p_alpha
     dphi <- ( (p_lambda / (p_alpha*b) ) * phi ) - ( log(b) * phi)
-    d <- (-1/p_theta^2)*(dphi/(1 - phi))    
+    e <- (-1/p_theta^2)*(dphi/(1 - phi))    
   } else {
-    d <- 0
+    e <- 0
   }
-  d_dtheta <- a + b + c + d
+  d_dtheta <- sum(a + c + d + e)
   return(d_dtheta)
-  
 }
 
 ## -- Hessian wrt theta                                      ####
@@ -508,6 +496,59 @@ xd_NB_alpha <- function(X, y, p_alpha, p_lambda, rate_param = FALSE, offset_feat
 
 
 
+
+
+## -- Hessian wrt log alpha                                  ####
+
+## packages like countreg and VGAM would set z = ln alpha and differentiate the loglikelihood wrt z 
+## -- alpha = exp(z)
+## -- d alpha d z = exp(z) = alpha 
+## -- d^2 alpha d z^2 = exp(z) = alpha 
+## -- Scoring: d LL d z = d LL d alpha * exp(z) = d LL d alpha * alpha 
+## -- Hessian: d^2LL d z^2 = d^2 LL d alpha^2 * exp(z)^2 + d LL d alpha  * exp(z) = d^2 LL d alpha^2 * alpha^2 + d LL d alpha * alpha 
+
+Hessian_NB_logalpha <- function(y, p_alpha, p_lambda, rate_param = FALSE, offset_feat = NA, offset_feat_value = NA, zerotrunc = FALSE){
+  a <- Hessian_NB_alpha(y = y, 
+                        p_alpha = p_alpha, 
+                        p_lambda = p_lambda, 
+                        rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  
+  b <- gradient_NB_alpha(y = y, 
+                         p_alpha = p_alpha, 
+                         p_lambda = p_lambda, 
+                         rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  c <- p_alpha^2*a + p_alpha*b
+  return(c)
+}
+
+## -- Hessian wrt log theta                                  #####
+
+## papers like DOI:10.1080/02664763.2025.2545890 and packages like gamplss would set z = ln theta and differentiate the loglikelihood wrt z 
+## -- theta = exp(z)
+## -- d theta d z = exp(z) = theta;
+## -- d^2 theta d z^2 = exp(z) = theta;
+## -- d LL d z = d LL d theta * exp(z) = d LL d theta * theta  
+## -- d^2LL d z^2 = d^2 LL d theta^2 * exp(z)^2 + d LL d theta  * exp(z) = d^2 LL d theta^2 * theta^2 + d LL d theta * theta
+Hessian_NB_logtheta <- function(y, p_alpha, p_lambda, rate_param = FALSE, offset_feat = NA, offset_feat_value = NA, zerotrunc = FALSE){
+  
+  ## for debug
+  #y=y_data
+  #p_alpha = chosen_alpha 
+  #p_lambda = lambda_iter
+  
+  a <- Hessian_NB_theta(y = y, 
+                        p_alpha = p_alpha, 
+                        p_lambda = p_lambda, 
+                        rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  
+  b <- gradient_NB_theta(y = y, 
+                         p_alpha = p_alpha, 
+                         p_lambda = p_lambda, 
+                         rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  c <- (1/(p_alpha^2))*a + (1/p_alpha)*b
+  return(c)
+  
+}
 
 
 ## B) Fitting, iterative                                     ####
@@ -849,9 +890,9 @@ FI_Beta <- function(p_lambda, p_alpha, X, y, rate_param = FALSE, offset_feat = N
 FI_alpha <- function(p_lambda, p_alpha, X, M =  20, rate_param = FALSE, offset_feat = NA, offset_feat_value = NA, zerotrunc = zerotrunc){
   
   ## Debug
-  p_lambda = lambda_iter                               
-  p_alpha =  chosen_alpha
-  X = X_data 
+  #p_lambda = lambda_iter                               
+  #p_alpha =  chosen_alpha
+  #X = X_data 
   
   if(rate_param & !is.na(offset_feat)){
     p_lambda_offset <- p_lambda*offset_feat_value                             
@@ -1153,22 +1194,42 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
                               p_alpha =  chosen_alpha,
                               p_lambda = lambda_iter, 
                               rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value)
+    
+    EIM_offdiag_a_log <- chosen_alpha*EIM_offdiag_a                                      # due to chain rule
+    EIM_offdiag_log  <- (1/chosen_alpha)*EIM_offdiag                                     # due to chain rule
+    
   } else {
-    EIM_offdiag_a <- EIM_offdiag <- NA
+    EIM_offdiag_a <- EIM_offdiag <- EIM_offdiag_a_log <- EIM_offdiag_log <- NA
   }
+  
+  ## --- Expected Info: log theta                  ####
+  EIM_logtheta <- 1/chosen_alpha^2 * EIM_theta$FI_theta_out             # The full expression includes the first derivative in theta too, the expectation of which is zero see supplement Proposition S3
+  
+  
+  ## --- Expected Info: log alpha                  ####
+  EIM_logalpha <- chosen_alpha^2 * EIM_alpha                            # The full expression includes the first derivative in alpha too, the expectation of which is zero see supplement Proposition S3
+  
   
   ## --- Var, and SE (expected info)                            ####
   if(!zerotrunc){
     ## Diagonal Information matrix allows separate inversions
     vcov_NB <- qr.solve(EIM_beta, tol = 1e-18)
     SE_model_NB_expected_beta <- sqrt(diag(vcov_NB))
-    SE_model_NB_expected_beta2 <- SE_model_NB_expected_beta                        # for output reporting
+    SE_model_NB_expected_beta2 <- SE_model_NB_expected_beta3 <- SE_model_NB_expected_beta4 <-  SE_model_NB_expected_beta        # for output reporting
     
     var_alpha_NB <- 1/EIM_alpha
-    SE_model_NB_expected_alpha <- sqrt(var_alpha_NB)
+    SE_model_NB_expected_alpha <- sqrt(var_alpha_NB)                               # SE for alpha, expected
     
-    var_theta_NB <- 1/EIM_theta$FI_theta_out                                       # Variance for theta
-    SE_model_NB_expected_theta <- sqrt(var_theta_NB)                              # SE for theta
+    var_theta_NB <- 1/EIM_theta$FI_theta_out                                       
+    SE_model_NB_expected_theta <- sqrt(var_theta_NB)                               # SE for theta, expected
+    
+    var_logalpha_NB <- 1/EIM_logalpha
+    SE_model_NB_expected_logalpha <- sqrt(var_logalpha_NB)                         # SE for log alpha, expected
+    
+    var_logtheta_NB <- 1/EIM_logtheta
+    SE_model_NB_expected_logtheta <- sqrt(var_logtheta_NB)                         # SE for log theta, expected
+    
+    
   } else {
     ## Fisher information matrix  no longer diagonal
     EIM <- rbind(cbind(EIM_beta, EIM_offdiag),
@@ -1185,6 +1246,22 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
     SE_model_NB_expected_all_alpha <- sqrt(diag(vcov_NB_expect_alpha))
     SE_model_NB_expected_beta2 <- SE_model_NB_expected_all_alpha[1:n_regressors]
     SE_model_NB_expected_alpha <- SE_model_NB_expected_all_alpha[n_regressors+1]
+    
+    ## In log alpha
+    EIM_3 <- rbind(cbind(EIM_beta, EIM_offdiag_a_log),
+                   cbind(t(EIM_offdiag_a_log), EIM_logalpha))
+    vcov_NB_expect_logalpha <-  qr.solve(EIM_3, tol = 1e-18)
+    SE_model_NB_expected_all_logalpha <- sqrt(diag(vcov_NB_expect_logalpha))
+    SE_model_NB_expected_beta3 <- SE_model_NB_expected_all_logalpha[1:n_regressors]
+    SE_model_NB_expected_logalpha <- SE_model_NB_expected_all_logalpha[n_regressors+1]
+    
+    ## in log theta
+    EIM_4 <- rbind(cbind(EIM_beta, EIM_offdiag_log),
+                   cbind(t(EIM_offdiag_log), EIM_logtheta))
+    vcov_NB_expect_logtheta <-  qr.solve(EIM_4, tol = 1e-18)
+    SE_model_NB_expected_all_logtheta <- sqrt(diag(vcov_NB_expect_logtheta))
+    SE_model_NB_expected_beta4 <- SE_model_NB_expected_all_logtheta[1:n_regressors]
+    SE_model_NB_expected_logtheta <- SE_model_NB_expected_all_logtheta[n_regressors+1]
     
   } 
   
@@ -1216,21 +1293,49 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
                                            rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
   
   
+  ## --- Observed info: log alpha; log theta                    ####
+  ## Most papers and software would set z = ln theta (or ln alpha) and differentiate the loglikelihood wrt z 
+  ## By application of the chain rule
+  ## -- d theta d z = exp(z) = theta  (or alpha); and d^2 theta d z^2 = exp(z) too
+  ## -- d LL d z = d LL d theta * exp(z) = d LL d theta * theta   [equivalently d LL d alpha * alpha ]
+  ## -- d^2LL d z^2 = d^2 LL d theta^2 * exp(z)^2 + d LL d theta  * exp(z) = d^2 LL d theta^2 * theta^2 + d LL d theta * theta  [equivalently d^2 LL d alpha^2 * alpha^2 + d LL d alpha * alpha ] 
+  
+  Info_NB_obs_logalpha <- -1*Hessian_NB_logalpha(y=y_data, 
+                                                 p_alpha = chosen_alpha, 
+                                                 p_lambda = lambda_iter,
+                                                 rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  
+  Info_NB_obs_logtheta <- -1*Hessian_NB_logtheta(y=y_data, 
+                                                 p_alpha = chosen_alpha, 
+                                                 p_lambda = lambda_iter,
+                                                 rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  
+  
   ## --- Var, and SE (observed info)                            ####
   if(!zerotrunc){
     ## Diagonal Inormation matrix allow separate inversions
     vcov_NB_obs <-  qr.solve(Info_NB_obs_beta, tol = 1e-18)
     SE_model_NB_obs_beta <- sqrt(diag(vcov_NB_obs))
-    SE_model_NB_obs2_beta <- SE_model_NB_obs_beta                               # for output reporting only
+    SE_model_NB_obs2_beta <- E_model_NB_obs3_beta <- E_model_NB_obs4_beta <- SE_model_NB_obs_beta                               # for output reporting only
     
     var_NB_obs_alpha <- 1/Info_NB_obs_alpha
     SE_model_NB_obs_alpha <- sqrt(var_NB_obs_alpha)
     
     var_NB_obs_theta <- 1/Info_NB_obs_theta
     SE_model_NB_obs_theta <- sqrt(var_NB_obs_theta)
+    
+    ## SE log alpha can be compared with packages countreg and VGAM:vglm
+    var_NB_obs_logalpha <- 1/Info_NB_obs_logalpha
+    SE_model_NB_obs_logalpha <- sqrt(var_NB_obs_logalpha)
+    
+    ## SE log theta can be compared with package gamlss
+    var_NB_obs_logtheta <- 1/Info_NB_obs_logtheta 
+    SE_model_NB_obs_logtheta <- sqrt(var_NB_obs_logtheta)
+    
+    
   } else {
     ## form the observed information matrix and invert
-    ## -- furst get the off-diagonal elements (x-derivatives) as these are no longer zero 
+    ## G et the off-diagonal elements (x-derivatives) as these are no longer zero 
     OIM_offdiag_alpha <- xd_NB_alpha(X = X_data, 
                                      y = y_data,
                                      p_alpha =  chosen_alpha,
@@ -1238,7 +1343,20 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
                                      rate_param = rate_param, offset_feat = offset_feat, offset_feat_value = offset_feat_value)
     OIM_offdiag_theta <- -(1/chosen_alpha^2) * OIM_offdiag_alpha
     
-    ## in theta
+    ## log alpha (for comparison with countreg's ztrunc and VGAM posnegbinomial family)
+    ## -- z = ln alpha --> alpha = exp(z)
+    ## -- d alpha d z = exp(z) = alpha 
+    ## -- d2 LL d beta d z = d^2 LL d beta d alpha * exp(z) = d^2 LL d beta d alpha * alpha 
+    OIM_offdiag_logalpha <- OIM_offdiag_alpha*chosen_alpha
+    
+    ## log theta
+    ## -- z = ln theta --> theta = exp(z)
+    ## -- d theta d z = exp(z) = theta 
+    ## -- d2 LL d beta d z = d^2 LL d beta d theta * exp(z) = d^2 LL d beta d theta * theta 
+    OIM_offdiag_logtheta <-   OIM_offdiag_theta*(1/chosen_alpha)
+    
+    
+    ## Observed info matrix in theta
     OIM <- rbind(cbind(Info_NB_obs_beta, OIM_offdiag_theta),
                  cbind(t(OIM_offdiag_theta), Info_NB_obs_theta))
     rownames(OIM) <- c(rownames(OIM_offdiag_alpha),"Info_NB_obs_theta") 
@@ -1247,7 +1365,7 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
     SE_model_NB_obs_beta <- SE_model_NB_obs[1:n_regressors]
     SE_model_NB_obs_theta <- SE_model_NB_obs[(n_regressors+1)]
     
-    ## in alpha
+    ## Observed info matrix in alpha
     OIM2 <- rbind(cbind(Info_NB_obs_beta, OIM_offdiag_alpha),
                   cbind(t(OIM_offdiag_alpha), Info_NB_obs_alpha))
     rownames(OIM2) <- c(rownames(OIM_offdiag_alpha),"Info_NB_obs_alpha")
@@ -1255,6 +1373,24 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
     SE_model_NB_obs2 <- sqrt(diag( vcov_NB_obs_alpha))
     SE_model_NB_obs2_beta <- SE_model_NB_obs2[1:n_regressors]
     SE_model_NB_obs_alpha <- SE_model_NB_obs2[(n_regressors+1)]
+    
+    ## Observed info in log alpha
+    OIM3 <- rbind(cbind(Info_NB_obs_beta, OIM_offdiag_logalpha),
+                  cbind(t(OIM_offdiag_logalpha), Info_NB_obs_logalpha))
+    rownames(OIM3) <- c(rownames(OIM_offdiag_logalpha),"Info_NB_obs_logalpha")
+    vcov_NB_obs_logalpha <-  qr.solve(OIM3, tol = 1e-18)
+    SE_model_NB_obs3 <- sqrt(diag( vcov_NB_obs_logalpha))
+    SE_model_NB_obs3_beta <- SE_model_NB_obs3[1:n_regressors]
+    SE_model_NB_obs_logalpha <- SE_model_NB_obs3[(n_regressors+1)]
+    
+    ## Observed info in log theta
+    OIM4 <- rbind(cbind(Info_NB_obs_beta, OIM_offdiag_logtheta),
+                  cbind(t(OIM_offdiag_logtheta), Info_NB_obs_logtheta))
+    rownames(OIM4) <- c(rownames(OIM_offdiag_alpha),"Info_NB_obs_logtheta") 
+    vcov_NB_obs_logtheta <-  qr.solve(OIM4, tol = 1e-18)
+    SE_model_NB_obs4 <- sqrt(diag( vcov_NB_obs_logtheta))
+    SE_model_NB_obs4_beta <- SE_model_NB_obs4[1:n_regressors]
+    SE_model_NB_obs_logtheta <- SE_model_NB_obs4[(n_regressors+1)]
     
   }
   
@@ -1273,12 +1409,22 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
               SE_expected = list(SE_expected_all_theta = list(SE_expected_beta = SE_model_NB_expected_beta,
                                                               SE_expected_theta = SE_model_NB_expected_theta),
                                  SE_expeted_all_alpha = list(SE_expected_beta = SE_model_NB_expected_beta2,      # slightly different for ZT
-                                                             SE_expected_alpha = SE_model_NB_expected_alpha)
+                                                             SE_expected_alpha = SE_model_NB_expected_alpha),
+                                 SE_expected_all_logtheta = list(SE_expected_beta = SE_model_NB_expected_beta4,
+                                                                 SE_expected_logtheta = SE_model_NB_expected_logtheta),
+                                 SE_expeted_all_logalpha = list(SE_expected_beta = SE_model_NB_expected_beta3,      # slightly different for ZT
+                                                                SE_expected_logalpha = SE_model_NB_expected_logalpha)
+                                 
               ),
               SE_oberved = list(SE_obs_all_theta = list(SE_obs_beta = SE_model_NB_obs_beta,
                                                         SE_obs_theta = SE_model_NB_obs_theta),
                                 SE_obs_all_alpha = list(SE_obs_beta = SE_model_NB_obs2_beta,                          # slightly different
-                                                        SE_obs_alpha = SE_model_NB_obs_alpha)
+                                                        SE_obs_alpha = SE_model_NB_obs_alpha),
+                                SE_obs_all_logtheta = list(SE_obs_beta = SE_model_NB_obs_beta,
+                                                           SE_obs_logtheta = SE_model_NB_obs_logtheta),
+                                SE_obs_all_logalpha = list(SE_obs_beta = SE_model_NB_obs2_beta,                       # slightly different
+                                                           SE_obs_logalpha = SE_model_NB_obs_logalpha)
+                                
               ),
               Lawless_FI_theta = list(FI_theta_Lawless = FI_theta_Lawless,
                                       FI_theta_approx = FI_theta_approx,
@@ -1290,21 +1436,22 @@ NegBReg_altern <- function(myData, target_feat =  target_feat, rate_param = FALS
 
 
 ##                                                           ####
-
-
-## E) Significance ####
+## E) Significance                                           ####
 myMLEsignif <- function(my_SE, my_p_est){
   
   modse_zValues <- my_p_est/my_SE
   if(!is.matrix(modse_zValues)){modse_zValues <- as.matrix(modse_zValues)}
   modse_signifc <- 2*pnorm(abs(modse_zValues), lower.tail = FALSE)
-  est_summary_table <- cbind.data.frame(round(my_p_est,3),
-                                        round(my_SE,3) ,
-                                        round(modse_zValues,3), 
-                                        round(modse_signifc,3))
+  est_summary_table <- cbind.data.frame(round(my_p_est,5),
+                                        round(my_SE,5) ,
+                                        round(modse_zValues,5), 
+                                        round(modse_signifc,5))
   colnames(est_summary_table) <- c("Estimate", "S.E.", "z values", "Pr(>|z|)")
   est_summary_table
 }
+
+
+
 
 ##                                                           ####
 ## Run numerical example 1 - baseline                        ####
@@ -1330,8 +1477,8 @@ test_signif_A11_beta_exp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expeted_a
                                         my_p_est= test_NB$p_beta_MLE)
 test_signif_A21_alpha_exp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expeted_all_alpha$SE_expected_alpha, 
                                          my_p_est= test_NB$p_alpha_MLE)
-tab_signif_A <- rbind(test_signif_A11_beta_exp, test_signif_A21_alpha_exp)
-rownames(tab_signif_A)[nrow(tab_signif_A)] <- "alpha"
+tab_signif_A_exp <- rbind(test_signif_A11_beta_exp, test_signif_A21_alpha_exp)
+rownames(tab_signif_A_exp)[nrow(tab_signif_A_exp)] <- "alpha"
 
 ## -- observed, alpha param
 test_signif_A12_beta_obs <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_alpha$SE_obs_beta, 
@@ -1343,18 +1490,18 @@ rownames(test_signif_A_obs)[nrow(test_signif_A_obs)] <- "alpha"
 colnames(test_signif_A_obs) <- paste0(colnames(test_signif_A_obs),"_obs")
 
 ## -- assemble
-tab_signif_A <- cbind(tab_signif_A, test_signif_A_obs[,-1])
+tab_signif_A <- cbind(tab_signif_A_exp, test_signif_A_obs[,-1])
 
 
-## -- expected, theta param
+## -- expected, theta (dispersion param, dp)
 test_signif_A11_beta_exp_dp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expected_all_theta$SE_expected_beta, 
                                            my_p_est= test_NB$p_beta_MLE)
 test_signif_A21_theta_exp_dp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expected_all_theta$SE_expected_theta, 
                                             my_p_est= 1/test_NB$p_alpha_MLE)
-tab_signif_A_dp <- rbind(test_signif_A11_beta_exp_dp, test_signif_A21_theta_exp_dp)
-rownames(tab_signif_A_dp)[nrow(tab_signif_A_dp)] <- "theta"
+tab_signif_A_exp_dp <- rbind(test_signif_A11_beta_exp_dp, test_signif_A21_theta_exp_dp)
+rownames(tab_signif_A_exp_dp)[nrow(tab_signif_A_exp_dp)] <- "theta"
 
-## -- observed, theta param
+## -- observed, theta (dispersion param, dp)
 test_signif_A12_beta_obs_dp <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_theta$SE_obs_beta, 
                                            my_p_est= test_NB$p_beta_MLE)
 
@@ -1365,7 +1512,60 @@ rownames(tab_signif_A_obs_dp)[nrow(tab_signif_A_obs_dp)] <- "theta"
 colnames(tab_signif_A_obs_dp) <- paste0(colnames(tab_signif_A_obs_dp),"_obs")
 
 ## -- assemble
-tab_signif_A_dp <- cbind(tab_signif_A_dp, tab_signif_A_obs_dp[,-1])
+tab_signif_A_dp <- cbind(tab_signif_A_exp_dp, tab_signif_A_obs_dp[,-1])
+rownames(tab_signif_A_dp)[nrow(tab_signif_A_dp)] <- "theta"
+tab_signif_A_dp_just_theta <- tab_signif_A_dp[nrow(tab_signif_A_dp), ]
+
+
+## -- expected, log alpha
+test_signif_A11_logalpha_exp_beta <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expeted_all_logalpha$SE_expected_beta, 
+                                                 my_p_est= test_NB$p_beta_MLE)
+test_signif_A21_logalpha_exp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expeted_all_logalpha$SE_expected_logalpha, 
+                                            my_p_est= log(test_NB$p_alpha_MLE))
+tab_signif_A_logalpha_exp <- rbind(test_signif_A11_logalpha_exp_beta, test_signif_A21_logalpha_exp)
+rownames(tab_signif_A_logalpha_exp)[nrow(tab_signif_A_logalpha_exp)] <- "logalpha"
+
+
+## -- observed, log alpha
+test_signif_A12_logalpha_obs_beta <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_logalpha$SE_obs_beta, 
+                                                 my_p_est= test_NB$p_beta_MLE)
+test_signif_A22_logalpha_obs <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_logalpha$SE_obs_logalpha, 
+                                            my_p_est= log(test_NB$p_alpha_MLE))
+
+test_signif_A_logalpha_obs <- rbind(test_signif_A12_logalpha_obs_beta, test_signif_A22_logalpha_obs)
+rownames(test_signif_A_logalpha_obs)[nrow(test_signif_A_logalpha_obs)] <- "logalpha"
+colnames(test_signif_A_logalpha_obs) <- paste0(colnames(test_signif_A_logalpha_obs),"_obs")
+
+## -- assemble
+tab_signif_A_logalpha <- cbind(tab_signif_A_logalpha_exp, test_signif_A_logalpha_obs[,-1])
+tab_signif_A_logalpha_just_alpha <- tab_signif_A_logalpha[nrow(tab_signif_A_logalpha), ]
+
+## -- Expected, log theta
+test_signif_A11_logtheta_exp_beta <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expected_all_logtheta$SE_expected_beta, 
+                                                 my_p_est= test_NB$p_beta_MLE)
+test_signif_A21_logtheta_exp <- myMLEsignif(my_SE = test_NB$SE_expected$SE_expected_all_logtheta$SE_expected_logtheta, 
+                                            my_p_est= log(1/test_NB$p_alpha_MLE))
+
+tab_signif_A_logtheta_exp <- rbind(test_signif_A11_logtheta_exp_beta , test_signif_A21_logtheta_exp)
+rownames(tab_signif_A_logtheta_exp )[nrow(tab_signif_A_logtheta_exp)] <- "logtheta"
+
+## -- observed log theta
+test_signif_A12_logtheta_obs_beta <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_logtheta$SE_obs_beta, 
+                                                 my_p_est= test_NB$p_beta_MLE)
+test_signif_A22_logtheta_obs <- myMLEsignif(my_SE = test_NB$SE_oberved$SE_obs_all_logtheta$SE_obs_logtheta, 
+                                            my_p_est= log(1/test_NB$p_alpha_MLE))
+
+test_signif_A_logtheta_obs <- rbind(test_signif_A12_logtheta_obs_beta, test_signif_A22_logtheta_obs)
+rownames(test_signif_A_logtheta_obs)[nrow(test_signif_A_logtheta_obs)] <- "logtheta"
+colnames(test_signif_A_logtheta_obs) <- paste0(colnames(test_signif_A_logtheta_obs),"_obs")
+
+
+## -- assembled tables for each parameterization
+tab_signif_A_logtheta <- cbind(tab_signif_A_logtheta_exp, test_signif_A_logtheta_obs[,-1])
+tab_signif_A_logtheta_just_theta <- tab_signif_A_logtheta[nrow(tab_signif_A_logtheta), ]
+
+
+
 
 ## c) Compare with pre-built                   ####
 ## --- MASS:glm.nb                             ####
@@ -1373,8 +1573,30 @@ obj_NB <- MASS::glm.nb(g_DISRUPTIONS ~.,
                        data = myData)
 
 obj_NB$coefficients
-obj_NB$theta
-1/obj_NB$theta           # dispersion parameter, to be compared with GAMLSS                               
+obj_NB$theta                                                  # in fact this is what we call alpha
+1/obj_NB$theta                                                # dispersion parameter, to be compared with GAMLSS                               
+
+
+
+## --- countreg:                               ####
+
+obj_NB_cr <- countreg::nbreg(g_DISRUPTIONS ~.,
+                             data = myData)
+
+obj_NB_cr$coefficients
+obj_NB_cr$coefficients.theta                        # this is ln alpha
+
+summary(obj_NB_cr)[1]
+summary(obj_NB_cr)[2]
+
+countreg_A_fulltab_beta <- as.data.frame(summary(obj_NB_cr)[1])
+countreg_A_fulltab_logalpha <- as.data.frame(summary(obj_NB_cr)[2])
+
+countreg_A_beta <-  countreg_A_fulltab_beta[,1,drop = FALSE]
+countreg_A_beta_SE <-  countreg_A_fulltab_beta[,2,drop = FALSE]
+countreg_A_logalpha <- countreg_A_fulltab_logalpha$coefficients.theta.Estimate
+countreg_A_logalpha_SE <- countreg_A_fulltab_logalpha$coefficients.theta.Std..Error
+
 
 
 
@@ -1382,23 +1604,28 @@ obj_NB$theta
 obj_NB_gam <- gamlss::gamlss(g_DISRUPTIONS ~.,
                              family = "NBI",
                              data = myData) 
-obj_NB_gam$mu.coefficients
-exp(obj_NB_gam$sigma.coefficients)                # dispersion parameter
-alpha_gamlss <- 1/exp(obj_NB_gam$sigma.coefficients)
 
-##
 summary(obj_NB_gam)[1:5,]
 
-## extract standar errors
+## extract estimators
+gamlss_A_beta <- obj_NB_gam$mu.coefficients
+gamlss_A_logtheta <- obj_NB_gam$sigma.coefficients                                 # "as is" output is ln theta
+gamlss_A_theta_computed <- exp(obj_NB_gam$sigma.coefficients)
+gamlss_A_alpha_computed <- 1/gamlss_A_theta_computed 
+
+
+## extract standard errors (workaround)
 var_gamlss <- vcov(obj_NB_gam)
 var_gamlss_coeff <- diag(var_gamlss[1:(nrow(var_gamlss)-1), 1:(ncol(var_gamlss)-1)])
-var_gamlss_logTheta <- diag(var_gamlss)[nrow(var_gamlss)]
-SE_gamlss <- sqrt(var_gamlss_coeff)
+var_gamlss_logtheta <- diag(var_gamlss)[nrow(var_gamlss)]
+gamlss_A_beta_SE <- sqrt(var_gamlss_coeff)
+gamlss_A_logtheta_SE <- sqrt(var_gamlss_logtheta)
+
 
 
 ## --- VGAM                                    ####
 
-library(VGAM)
+#library(VGAM)
 ## Syntax for fitting NB2 as in doi: 10.1111/anzs.12283 section 2
 obj_NB_vgam <- VGAM::vglm(g_DISRUPTIONS ~. , 
                           family  = negbinomial,
@@ -1414,48 +1641,74 @@ obj_NB_vgam@predictors
 ## Based on doi: 10.1111/anzs.12283 equation 1 and 4: they estimate what I call alpha which is what they call k; but it is presented as log k ("eta 2" in eq. 4)
 ## Additional useful information: lookup "negbinomial" https://cran.r-project.org/web/packages/VGAM/VGAM.pdf
 ## -- p 606 find argument "nsimEIM": mentions that it is used for computing the diagonal element of the expected information matrix (EIM) corresponding to k based on the simulated Fisher scoring (SFS) algorithm."
-## -- P 606 also mentions that the argument "cutoff.prob" i ussed "to specify how many terms of the infinite series for computing the second diagonal element of the EIM are actually used"
+## -- P 606 also mentions that the argument "cutoff.prob" i used "to specify how many terms of the infinite series for computing the second diagonal element of the EIM are actually used"
 ## -- then again p 199 set nsimEIM = NULL to choose the other (EXACT?) algorithm
 ## -- p 607 mentions the trigamma function and its expectations when computing the EIM with respect to the "size" parameter
 ## -- p.608 mentions it estimates both parmaters of the neg bin by full maximum likelihood estimation 
 ## -- p.609 mentions "For negbinomial() the diagonal element of the expected information matrix (EIM) for parameter k involves an infinite series; consequently SFS (see nsimEIM) is used as the backup algorithm
 var_vgam <- vcov(obj_NB_vgam)
-vgam_beta <- obj_NB_vgam@coefficients[c(1,3:length(obj_NB_vgam@coefficients))]
-vgam_beta_sE <- round(sqrt(diag(var_vgam)[c(1,3:length(obj_NB_vgam@coefficients))]),5)
+vgam_A_beta <- obj_NB_vgam@coefficients[c(1,3:length(obj_NB_vgam@coefficients))]
+vgam_A_beta_sE <- round(sqrt(diag(var_vgam)[c(1,3:length(obj_NB_vgam@coefficients))]),5)
 
-vgam_alpha <- exp(obj_NB_vgam@coefficients[2])
-vgam_lnAlpha_SE <- sqrt(diag(var_vgam)[2])   
+vgam_A_logalpha <- obj_NB_vgam@coefficients[2]
+vgam_A_logalpha_SE <- sqrt(diag(var_vgam)[2])   
+
+vgam_A_alpha_computed <- exp(obj_NB_vgam@coefficients[2])
+
+
 
 ## --- Table comparative                       ####
-tab_pre_built <-  round(summary(obj_NB)$coefficients[,1:2],5)
-tab_pre_built_GAMLSS <-  round(cbind.data.frame(obj_NB_gam$mu.coefficients, SE_gamlss),5)
-tab_pre_built_VGAM <- round(cbind.data.frame(vgam_beta, vgam_beta_sE),5 )
-tab_fromScratch <- round(cbind.data.frame(test_NB$p_beta_MLE, test_NB$SE_expected$SE_expected_beta, test_NB$SE_oberved$SE_obs_beta),5)
 
-tab_pre_built_alpha <- round(cbind.data.frame(summary(obj_NB)[17], summary(obj_NB)[18]),5)
-tab_pre_built_alpha_GAMLSS <- cbind.data.frame(round(alpha_gamlss,5), "n.a.")
-tab_pre_built_alpha_VGAM <- cbind.data.frame(round(vgam_alpha,5), "n.a.")
-tab_fromScratch_alpha <- round(cbind.data.frame(test_NB$p_alpha_MLE, test_NB$SE_expected$SE_expected_alpha, test_NB$SE_oberved$SE_obs_alpha),5)
+tab_fromScratch <- rbind.data.frame(tab_signif_A, 
+                                    tab_signif_A_dp_just_theta,
+                                    tab_signif_A_logalpha_just_alpha,
+                                    tab_signif_A_logtheta_just_theta
+)
 
-tab_pre_built_theta <- cbind.data.frame(round(as.numeric(1/unlist(summary(obj_NB)[17])),5), "n.a.")
-tab_pre_built_theta_GAMLSS <- cbind.data.frame(round(exp(obj_NB_gam$sigma.coefficients),5), "n.a.")
-tab_pre_built_theta_VGAM <-  cbind.data.frame(round(1/vgam_alpha,5), "n.a.")
-tab_fromScratch_theta <- round(cbind.data.frame(1/test_NB$p_alpha_MLE, test_NB$SE_oberved$SE_obs_theta, test_NB$SE_oberved$SE_obs_theta),5)
+tab_pre_built_MASS <-  round(summary(obj_NB)$coefficients[,1:2],5)
+tab_pre_built_countreg <- round(countreg_A_fulltab_beta[,c(1,2),drop = FALSE], 5)
+tab_pre_built_GAMLSS <-  round(cbind.data.frame(gamlss_A_beta, gamlss_A_beta_SE),5)
+tab_pre_built_VGAM <- round(cbind.data.frame(vgam_A_beta, vgam_A_beta_sE),5 )
 
-colnames(tab_fromScratch)  <- c("Estimate", "SE expected", "SE observed")
-colnames(tab_pre_built) <- paste0(c("glmnb_"),colnames(tab_pre_built))
+tab_pre_built_alpha_MASS <- round(cbind.data.frame(summary(obj_NB)[17], summary(obj_NB)[18]),5)
+tab_pre_built_alpha_countreg <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_GAMLSS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_VGAM <- cbind.data.frame("n.a.", "n.a.")
+
+tab_pre_built_theta_MASS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_countreg <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_GAMLSS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_VGAM <-  cbind.data.frame("n.a.", "n.a.")
+
+tab_pre_built_logalpha_MASS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_countreg <- round(countreg_A_fulltab_logalpha[,c(1:2)],5)
+tab_pre_built_logalpha_GAMLSS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_VGAM <-  cbind.data.frame(round(vgam_A_logalpha,5), round(vgam_A_logalpha_SE,5))
+
+tab_pre_built_logtheta_MASS <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_countreg <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_GAMLSS <- cbind.data.frame(round(gamlss_A_logtheta,5), round(gamlss_A_logtheta_SE,5))
+tab_pre_built_logtheta_VGAM <-  cbind.data.frame("n.a.", "n.a.")
+
+colnames(tab_pre_built_MASS) <- paste0(c("glmnb_"),colnames(tab_pre_built_MASS))
+colnames(tab_pre_built_countreg) <- c("countreg_coeff", "countreg_SE")
 colnames(tab_pre_built_GAMLSS) <- c("gamlss_coeff", "gamlss_SE")
 colnames(tab_pre_built_VGAM) <- c("vglm_coeff", "vglm_SE")
 
-a <- cbind.data.frame(tab_fromScratch, tab_pre_built, tab_pre_built_GAMLSS, tab_pre_built_VGAM)
-b <- cbind.data.frame(tab_fromScratch_alpha, tab_pre_built_alpha, tab_pre_built_alpha_GAMLSS, tab_pre_built_alpha_VGAM)
-c <- cbind.data.frame(tab_fromScratch_theta, tab_pre_built_theta, tab_pre_built_theta_GAMLSS, tab_pre_built_theta_VGAM)
+a <- cbind.data.frame(tab_pre_built_MASS, tab_pre_built_countreg, tab_pre_built_GAMLSS, tab_pre_built_VGAM)
+b <- cbind.data.frame(tab_pre_built_alpha_MASS, tab_pre_built_alpha_countreg, tab_pre_built_alpha_GAMLSS, tab_pre_built_alpha_VGAM)
+c <- cbind.data.frame(tab_pre_built_theta_MASS, tab_pre_built_theta_countreg, tab_pre_built_theta_GAMLSS, tab_pre_built_theta_VGAM)
+d <- cbind.data.frame(tab_pre_built_logalpha_MASS, tab_pre_built_logalpha_countreg, tab_pre_built_logalpha_GAMLSS, tab_pre_built_logalpha_VGAM)
+e <- cbind.data.frame(tab_pre_built_logtheta_MASS, tab_pre_built_logtheta_countreg, tab_pre_built_logtheta_GAMLSS, tab_pre_built_logtheta_VGAM)
 
-colnames(c) <- colnames(b) <- colnames(a)
+colnames(e) <- colnames(d) <- colnames(c) <- colnames(b) <- colnames(a)
 rownames(b) <- "alpha"
 rownames(c) <- "theta"
+rownames(d) <- "log alpha"
+rownames(e) <- "log theta"
 
-myTab4viz <- rbind.data.frame(a, b, c)
+tab_pre_built <- rbind.data.frame(a, b, c, d, e)
+myTab4viz <- cbind(tab_fromScratch, tab_pre_built)
 
 ## Generate LaTeX export
 library(kableExtra)
@@ -1465,8 +1718,6 @@ kbl(myTab4viz, format = "latex")
 
 
 ##                                                           ####
-
-
 ## Run numerical example 2 - offset                          ####
 ## a) Set arguments                                          ####
 target_feat = "g_DISRUPTIONS"
@@ -1495,8 +1746,8 @@ test_signif_B11_beta_exp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_ex
                                         my_p_est= test_NB_offset$p_beta_MLE)
 test_signif_B21_alpha_exp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expeted_all_alpha$SE_expected_alpha, 
                                          my_p_est= test_NB_offset$p_alpha_MLE)
-tab_signif_B <- rbind(test_signif_B11_beta_exp, test_signif_B21_alpha_exp)
-rownames(tab_signif_B)[nrow(tab_signif_B)] <- "alpha"
+tab_signif_B_exp <- rbind(test_signif_B11_beta_exp, test_signif_B21_alpha_exp)
+rownames(tab_signif_B_exp)[nrow(tab_signif_B_exp)] <- "alpha"
 
 ## -- observed, alpha param
 test_signif_B12_beta_obs <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_alpha$SE_obs_beta, 
@@ -1508,15 +1759,15 @@ rownames(test_signif_B_obs)[nrow(test_signif_B_obs)] <- "alpha"
 colnames(test_signif_B_obs) <- paste0(colnames(test_signif_B_obs),"_obs")
 
 ## -- assemble
-tab_signif_B_offset <- cbind(tab_signif_B, test_signif_B_obs[,-1])
+tab_signif_B_alpha <- cbind(tab_signif_B_exp, test_signif_B_obs[,-1])
 
 ## -- expected, theta param
 test_signif_B11_beta_exp_dp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expected_all_theta$SE_expected_beta, 
                                            my_p_est= test_NB_offset$p_beta_MLE)
 test_signif_B21_theta_exp_dp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expected_all_theta$SE_expected_theta, 
                                             my_p_est= 1/test_NB_offset$p_alpha_MLE)
-tab_signif_B_dp <- rbind(test_signif_B11_beta_exp_dp, test_signif_B21_theta_exp_dp)
-rownames(tab_signif_B_dp)[nrow(tab_signif_B_dp)] <- "theta"
+tab_signif_B_exp_dp <- rbind(test_signif_B11_beta_exp_dp, test_signif_B21_theta_exp_dp)
+rownames(tab_signif_B_exp_dp)[nrow(tab_signif_B_exp_dp)] <- "theta"
 
 ## -- observed, theta param
 test_signif_B12_beta_obs_dp <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_theta$SE_obs_beta, 
@@ -1529,7 +1780,60 @@ rownames(tab_signif_B_obs_dp)[nrow(tab_signif_B_obs_dp)] <- "theta"
 colnames(tab_signif_B_obs_dp) <- paste0(colnames(tab_signif_B_obs_dp),"_obs")
 
 ## -- assemble
-tab_signif_B_dp_offset <- cbind(tab_signif_B_dp, tab_signif_B_obs_dp[,-1])
+tab_signif_B_dp <- cbind(tab_signif_B_exp_dp, tab_signif_B_obs_dp[,-1])
+tab_signif_B_dp_just_theta <- tab_signif_B_dp[nrow(tab_signif_B_dp),]
+
+
+
+## -- expected, log alpha
+test_signif_B11_logalpha_exp_beta <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expeted_all_logalpha$SE_expected_beta, 
+                                                 my_p_est= test_NB_offset$p_beta_MLE)
+test_signif_B21_logalpha_exp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expeted_all_logalpha$SE_expected_logalpha, 
+                                            my_p_est= log(test_NB_offset$p_alpha_MLE))
+tab_signif_B_logalpha_exp <- rbind(test_signif_B11_logalpha_exp_beta, test_signif_B21_logalpha_exp)
+rownames(tab_signif_B_logalpha_exp)[nrow(tab_signif_B_logalpha_exp)] <- "logalpha"
+
+
+## -- observed, log alpha
+test_signif_B12_logalpha_obs_beta <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_logalpha$SE_obs_beta, 
+                                                 my_p_est= test_NB_offset$p_beta_MLE)
+test_signif_B22_logalpha_obs <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_logalpha$SE_obs_logalpha, 
+                                            my_p_est= log(test_NB_offset$p_alpha_MLE))
+
+test_signif_B_logalpha_obs <- rbind(test_signif_B12_logalpha_obs_beta, test_signif_B22_logalpha_obs)
+rownames(test_signif_B_logalpha_obs)[nrow(test_signif_B_logalpha_obs)] <- "logalpha"
+colnames(test_signif_B_logalpha_obs) <- paste0(colnames(test_signif_B_logalpha_obs),"_obs")
+
+## -- assemble
+tab_signif_B_logalpha <- cbind(tab_signif_B_logalpha_exp, test_signif_B_logalpha_obs[,-1])
+tab_signif_B_logalpha_just_alpha <- tab_signif_B_logalpha[nrow(tab_signif_B_logalpha), ]
+
+## -- Expected, log theta
+test_signif_B11_logtheta_exp_beta <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expected_all_logtheta$SE_expected_beta, 
+                                                 my_p_est= test_NB_offset$p_beta_MLE)
+test_signif_B21_logtheta_exp <- myMLEsignif(my_SE = test_NB_offset$SE_expected$SE_expected_all_logtheta$SE_expected_logtheta, 
+                                            my_p_est= log(1/test_NB_offset$p_alpha_MLE))
+
+tab_signif_B_logtheta_exp <- rbind(test_signif_B11_logtheta_exp_beta , test_signif_B21_logtheta_exp)
+rownames(tab_signif_B_logtheta_exp )[nrow(tab_signif_B_logtheta_exp)] <- "logtheta"
+
+## -- observed log theta
+test_signif_B12_logtheta_obs_beta <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_logtheta$SE_obs_beta, 
+                                                 my_p_est= test_NB_offset$p_beta_MLE)
+test_signif_B22_logtheta_obs <- myMLEsignif(my_SE = test_NB_offset$SE_oberved$SE_obs_all_logtheta$SE_obs_logtheta, 
+                                            my_p_est= log(1/test_NB_offset$p_alpha_MLE))
+
+test_signif_B_logtheta_obs <- rbind(test_signif_B12_logtheta_obs_beta, test_signif_B22_logtheta_obs)
+rownames(test_signif_B_logtheta_obs)[nrow(test_signif_B_logtheta_obs)] <- "logtheta"
+colnames(test_signif_B_logtheta_obs) <- paste0(colnames(test_signif_B_logtheta_obs),"_obs")
+
+
+## -- assemble
+tab_signif_B_logtheta <- cbind(tab_signif_B_logtheta_exp, test_signif_B_logtheta_obs[,-1])
+tab_signif_B_logtheta_just_theta <- tab_signif_B_logtheta[nrow(tab_signif_B_logtheta), ]
+
+
+
 
 
 ## c) Compare with pre-built                                 ####
@@ -1537,15 +1841,38 @@ tab_signif_B_dp_offset <- cbind(tab_signif_B_dp, tab_signif_B_obs_dp[,-1])
 ## --- MASS:glm.nb                             ####
 ## Note: offset is specified in a different way compared with glm, via offset()
 ## -- for an example of how to write an offset in glm.bn: https://stats.stackexchange.com/q/180260/513606
-obj_NB_off <- MASS::glm.nb(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS + offset(log(d_TIME_offset)),
+#obj_NB_off <- MASS::glm.nb(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS + offset(log(d_TIME_offset)),
+obj_NB_off <- MASS::glm.nb(g_DISRUPTIONS ~ g_SUBJECTS + b_IS_BIO+ offset(log(d_TIME_offset)),
                            data = myData)
 obj_NB_off$coefficients
 obj_NB_off$theta
 1/obj_NB_off$theta           # dispersion parameter, to be compared with GAMLSS                               
 
 
+## --- countreg                                ####
+
+obj_NB_cr_off <- countreg::nbreg(g_DISRUPTIONS ~ g_SUBJECTS + b_IS_BIO,
+                                 offset = log(d_TIME_offset),
+                                 data = myData)
+
+obj_NB_cr_off$coefficients
+obj_NB_cr_off$coefficients.theta                        # this is ln alpha
+
+summary(obj_NB_cr_off)[1]
+summary(obj_NB_cr_off)[2]
+
+countreg_B_fulltab_beta <- as.data.frame(summary(obj_NB_cr_off)[1])
+countreg_B_fulltab_logalpha <- as.data.frame(summary(obj_NB_cr_off)[2])
+
+countreg_B_beta <-  countreg_B_fulltab_beta[,1,drop = FALSE]
+countreg_B_beta_SE <-  countreg_B_fulltab_beta[,2,drop = FALSE]
+countreg_B_logalpha <- countreg_B_fulltab_logalpha$coefficients.theta.Estimate
+countreg_B_logalpha_SE <- countreg_B_fulltab_logalpha$coefficients.theta.Std..Error
+
+
 ## --- GAMLSS                                  ####
-obj_NB_gam_off <- gamlss::gamlss(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS + offset(log(d_TIME_offset)),
+#obj_NB_gam_off <- gamlss::gamlss(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS + offset(log(d_TIME_offset)),
+obj_NB_gam_off <- gamlss::gamlss(g_DISRUPTIONS ~ g_SUBJECTS + b_IS_BIO + offset(log(d_TIME_offset)),
                                  family = "NBI",
                                  data = myData) 
 obj_NB_gam_off$mu.coefficients
@@ -1553,13 +1880,28 @@ exp(obj_NB_gam_off$sigma.coefficients)                                      # di
 alpha_gamlss_off <- 1/exp(obj_NB_gam_off$sigma.coefficients)
 
 ##
-summary(obj_NB_gam_off)[1:5,]
+summary(obj_NB_gam_off)
 
-## extract standar errors
+## extract estimators
+gamlss_B_beta <- obj_NB_gam_off$mu.coefficients
+gamlss_B_logtheta <- obj_NB_gam_off$sigma.coefficients                                 # "as is" output is ln theta
+gamlss_B_theta_computed <- exp(obj_NB_gam_off$sigma.coefficients)
+gamlss_B_alpha_computed <- 1/gamlss_B_theta_computed 
+
+
+## extract standard errors (workaround)
 var_gamlss_off <- vcov(obj_NB_gam_off)
-var_gamlss_coeff_off <- diag(var_gamlss[1:(nrow(var_gamlss_off)-1), 1:(ncol(var_gamlss_off)-1)])
-var_gamlss_logTheta_off <- diag(var_gamlss_off)[nrow(var_gamlss_off)]
-SE_gamlss_off <- sqrt(var_gamlss_coeff_off)
+var_gamlss_coeff_off <- diag(var_gamlss_off[1:(nrow(var_gamlss_off)-1), 1:(ncol(var_gamlss_off)-1)])
+var_gamlss_logtheta_off <- diag(var_gamlss_off)[nrow(var_gamlss_off)]
+gamlss_B_beta_SE <- sqrt(var_gamlss_coeff_off)
+gamlss_B_logtheta_SE <- sqrt(var_gamlss_logtheta_off)
+
+
+
+
+
+
+
 
 
 ## --- VGAM                                    ####
@@ -1570,8 +1912,10 @@ library(VGAM)
 #                           family  = negbinomial,
 #                           data = myData)
 
-obj_NB_vgam_off <- VGAM::vglm(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS,
-                              offset = log(d_TIME_offset),
+#obj_NB_vgam_off <- VGAM::vglm(g_DISRUPTIONS ~ b_IS_BIO + g_CENTRES + g_SUBJECTS,
+obj_NB_vgam_off <- VGAM::vglm(g_DISRUPTIONS ~  g_SUBJECTS + b_IS_BIO,
+                              #offset = log(d_TIME_offset),               # this is incorrect according to Thomas
+                              offset = cbind(log(d_TIME_offset), 0),      # as per thomas suggestion
                               family  = negbinomial,
                               data = myData)
 
@@ -1582,44 +1926,68 @@ obj_NB_vgam_off@coefficients
 obj_NB_vgam_off@predictors
 
 var_vgam_off <- vcov(obj_NB_vgam_off)
-vgam_beta_off <- obj_NB_vgam_off@coefficients[c(1,3:length(obj_NB_vgam_off@coefficients))]
-vgam_beta_sE_off <- round(sqrt(diag(var_vgam_off)[c(1,3:length(obj_NB_vgam_off@coefficients))]),5)
+vgam_B_beta <- obj_NB_vgam_off@coefficients[c(1,3:length(obj_NB_vgam_off@coefficients))]
+vgam_B_beta_sE <- round(sqrt(diag(var_vgam_off)[c(1,3:length(obj_NB_vgam_off@coefficients))]),5)
 
-vgam_alpha_off <- exp(obj_NB_vgam_off@coefficients[2])
-vgam_lnAlpha_SE_off <- sqrt(diag(var_vgam_off)[2])   
+vgam_B_alpha <- exp(obj_NB_vgam_off@coefficients[2])
+vgam_B_logalpha <- (obj_NB_vgam_off@coefficients[2])
+vgam_B_logalpha_SE <- sqrt(diag(var_vgam_off)[2])   
+
+
 
 
 ## --- Table comparative                       ####
-tab_pre_built_off  <-  round(summary(obj_NB_off)$coefficients[,1:2],5)
-tab_pre_built_GAMLSS_off  <- round(cbind.data.frame(obj_NB_gam_off$mu.coefficients, SE_gamlss),5)
-tab_pre_built_VGAM_off <- round(cbind.data.frame(vgam_beta_off, vgam_beta_sE_off),5 )
-tab_fromScratch_off  <- round(cbind.data.frame(test_NB_offset$p_beta_MLE, test_NB_offset$SE_expected$SE_expected_beta, test_NB_offset$SE_oberved$SE_obs_beta),5)
+tab_fromScratch_off <- rbind.data.frame(tab_signif_B_alpha,
+                                        tab_signif_B_dp_just_theta,
+                                        tab_signif_B_logalpha_just_alpha,
+                                        tab_signif_B_logtheta_just_theta
+)
 
-tab_pre_built_alpha_off  <- round(cbind.data.frame(summary(obj_NB_off)[17], summary(obj_NB_off)[18]),5)
-tab_pre_built_alpha_GAMLSS_off  <- cbind.data.frame(round(alpha_gamlss_off,5), "n.a.")
-tab_pre_built_alpha_VGAM_off <- cbind.data.frame(round(vgam_alpha_off,5), "n.a.")
-tab_fromScratch_alpha_off  <- round(cbind.data.frame(test_NB_offset$p_alpha_MLE, test_NB_offset$SE_expected$SE_expected_alpha, test_NB_offset$SE_oberved$SE_obs_alpha),5)
+tab_pre_built_MASS_off  <-  round(summary(obj_NB_off)$coefficients[,1:2],5)
+tab_pre_built_countreg_off <- round(countreg_B_fulltab_beta[,c(1,2),drop = FALSE], 5)
+tab_pre_built_GAMLSS_off <-  round(cbind.data.frame(gamlss_B_beta, gamlss_B_beta_SE),5)
+tab_pre_built_VGAM_off <- round(cbind.data.frame(vgam_B_beta, vgam_B_beta_sE),5 )
 
-tab_pre_built_theta_off <- cbind.data.frame(round(as.numeric(1/unlist(summary(obj_NB_off)[17])),5), "n.a.")
-tab_pre_built_theta_GAMLSS_off <- cbind.data.frame(round(exp(obj_NB_gam_off$sigma.coefficients),5), "n.a.")
-tab_pre_built_theta_VGAM_off <-  cbind.data.frame(round(1/vgam_alpha_off,5), "n.a.")
-tab_fromScratch_theta_off <- round(cbind.data.frame(1/test_NB_offset$p_alpha_MLE, test_NB_offset$SE_oberved$SE_obs_theta, test_NB_offset$SE_oberved$SE_obs_theta),5)
+tab_pre_built_alpha_MASS_off  <- round(cbind.data.frame(summary(obj_NB_off)[17], summary(obj_NB_off)[18]),5)
+tab_pre_built_alpha_countreg_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_GAMLSS_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_VGAM_off  <- cbind.data.frame("n.a.", "n.a.")
 
+tab_pre_built_theta_MASS_off <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_countreg_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_GAMLSS_off <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_VGAM_off <-  cbind.data.frame("n.a.", "n.a.")
 
-colnames(tab_fromScratch_off)  <- c("Estimate", "SE expected", "SE observed")
-colnames(tab_pre_built_off) <- paste0(c("glmnb_"),colnames(tab_pre_built_off))
+tab_pre_built_logalpha_MASS_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_countreg_off  <- round(countreg_B_fulltab_logalpha[,c(1:2)],5)
+tab_pre_built_logalpha_GAMLSS_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_VGAM_off  <-  cbind.data.frame(round(vgam_B_logalpha,5), round(vgam_B_logalpha_SE,5))
+
+tab_pre_built_logtheta_MASS_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_countreg_off  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_GAMLSS_off  <- cbind.data.frame(round(gamlss_B_logtheta,5), round(gamlss_B_logtheta_SE,5))
+tab_pre_built_logtheta_VGAM_off  <-  cbind.data.frame("n.a.", "n.a.")
+
+colnames(tab_pre_built_MASS_off) <- paste0(c("glmnb_"),colnames(tab_pre_built_MASS_off))
+colnames(tab_pre_built_countreg_off) <- c("countreg_coeff", "countreg_SE")
 colnames(tab_pre_built_GAMLSS_off) <- paste0(c("gamlss_coeff", "gamlss_SE"))
 colnames(tab_pre_built_VGAM_off) <- c("vglm_coeff", "vglm_SE")
 
-a <- cbind.data.frame(tab_fromScratch_off, tab_pre_built_off, tab_pre_built_GAMLSS_off, tab_pre_built_VGAM_off)
-b <- cbind.data.frame(tab_fromScratch_alpha_off, tab_pre_built_alpha_off, tab_pre_built_alpha_GAMLSS_off, tab_pre_built_alpha_VGAM_off)
-c <- cbind.data.frame(tab_fromScratch_theta_off, tab_pre_built_theta_off, tab_pre_built_theta_GAMLSS_off, tab_pre_built_theta_VGAM_off)
+a <- cbind.data.frame(tab_pre_built_MASS_off, tab_pre_built_countreg_off, tab_pre_built_GAMLSS_off, tab_pre_built_VGAM_off)
+b <- cbind.data.frame(tab_pre_built_alpha_MASS_off, tab_pre_built_alpha_countreg_off, tab_pre_built_alpha_GAMLSS_off, tab_pre_built_alpha_VGAM_off)
+c <- cbind.data.frame(tab_pre_built_theta_MASS_off, tab_pre_built_theta_countreg_off, tab_pre_built_theta_GAMLSS_off, tab_pre_built_theta_VGAM_off)
+d <- cbind.data.frame(tab_pre_built_logalpha_MASS_off, tab_pre_built_logalpha_countreg_off, tab_pre_built_logalpha_GAMLSS_off, tab_pre_built_logalpha_VGAM_off)
+e <- cbind.data.frame(tab_pre_built_logtheta_MASS_off, tab_pre_built_logtheta_countreg_off, tab_pre_built_logtheta_GAMLSS_off, tab_pre_built_logtheta_VGAM_off)
 
-colnames(c) <- colnames(b) <- colnames(a)
+colnames(e) <- colnames(d) <- colnames(c) <- colnames(b) <- colnames(a)
 rownames(b) <- "alpha"
 rownames(c) <- "theta"
+rownames(d) <- "log alpha"
+rownames(e) <- "log theta"
 
-myTab4viz_off <- rbind.data.frame(a, b, c)
+
+tab_pre_built_off <- rbind.data.frame(a, b, c, d, e)
+myTab4viz_off <- cbind(tab_fromScratch_off , tab_pre_built_off)
 
 ## Generate LaTeX export
 library(kableExtra)
@@ -1634,6 +2002,7 @@ target_feat = "g_DISRUPTIONS"
 ## zero truncation, no offset
 offset_feat = NA
 rate_param = FALSE
+offset_feat_value = NA
 zerotrunc = TRUE
 
 
@@ -1642,7 +2011,7 @@ zerotrunc = TRUE
 #rate_param = TRUE
 #zerotrunc = TRUE
 
-## b1) full alternating procedure                             ####
+## b1) full alternating procedure                            ####
 test_NB_ZT <- NegBReg_altern(myData = myData, 
                              target_feat =  target_feat,
                              rate_param = rate_param, 
@@ -1655,14 +2024,14 @@ test_NB_ZT$p_beta_MLE
 test_NB_ZT$p_alpha_MLE
 
 
-## b2) Significance ####
+## b2) Significance                                          ####
 ## -- expected, alpha param
 test_signif_C11_beta_exp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expeted_all_alpha$SE_expected_beta, 
                                         my_p_est= test_NB_ZT$p_beta_MLE)
 test_signif_C21_alpha_exp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expeted_all_alpha$SE_expected_alpha, 
                                          my_p_est= test_NB_ZT$p_alpha_MLE)
-tab_signif_C <- rbind(test_signif_C11_beta_exp, test_signif_C21_alpha_exp)
-rownames(tab_signif_C)[nrow(tab_signif_C)] <- "alpha"
+tab_signif_C_exp <- rbind(test_signif_C11_beta_exp, test_signif_C21_alpha_exp)
+rownames(tab_signif_C_exp)[nrow(tab_signif_C_exp)] <- "alpha"
 
 ## -- observed, alpha param
 test_signif_C12_beta_obs <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_alpha$SE_obs_beta, 
@@ -1674,15 +2043,15 @@ rownames(test_signif_C_obs)[nrow(test_signif_C_obs)] <- "alpha"
 colnames(test_signif_C_obs) <- paste0(colnames(test_signif_C_obs),"_obs")
 
 ## -- assemble
-tab_signif_C_ZT <- cbind(tab_signif_C, test_signif_C_obs[,-1])
+tab_signif_C_alpha <- cbind(tab_signif_C_exp, test_signif_C_obs[,-1])
 
 ## -- expected, theta param
 test_signif_C11_beta_exp_dp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expected_all_theta$SE_expected_beta, 
                                            my_p_est= test_NB_ZT$p_beta_MLE)
 test_signif_C21_theta_exp_dp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expected_all_theta$SE_expected_theta, 
                                             my_p_est= 1/test_NB_ZT$p_alpha_MLE)
-tab_signif_C_dp <- rbind(test_signif_C11_beta_exp_dp, test_signif_C21_theta_exp_dp)
-rownames(tab_signif_C_dp)[nrow(tab_signif_C_dp)] <- "theta"
+tab_signif_C_exp_dp <- rbind(test_signif_C11_beta_exp_dp, test_signif_C21_theta_exp_dp)
+rownames(tab_signif_C_exp_dp)[nrow(tab_signif_C_exp_dp)] <- "theta"
 
 ## -- observed, theta param
 test_signif_C12_beta_obs_dp <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_theta$SE_obs_beta, 
@@ -1695,11 +2064,88 @@ rownames(tab_signif_C_obs_dp)[nrow(tab_signif_C_obs_dp)] <- "theta"
 colnames(tab_signif_C_obs_dp) <- paste0(colnames(tab_signif_C_obs_dp),"_obs")
 
 ## -- assemble
-tab_signif_C_dp_ZT <- cbind(tab_signif_C_dp, tab_signif_C_obs_dp[,-1])
+tab_signif_C_dp <- cbind(tab_signif_C_exp_dp, tab_signif_C_obs_dp[,-1])
+tab_signif_C_dp_just_theta <- tab_signif_C_dp[nrow(tab_signif_C_dp),]
+
+
+
+
+
+## -- expected, log alpha
+test_signif_C11_logalpha_exp_beta <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expeted_all_logalpha$SE_expected_beta, 
+                                                 my_p_est= test_NB_ZT$p_beta_MLE)
+test_signif_C21_logalpha_exp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expeted_all_logalpha$SE_expected_logalpha, 
+                                            my_p_est= log(test_NB_ZT$p_alpha_MLE))
+tab_signif_C_logalpha_exp <- rbind(test_signif_C11_logalpha_exp_beta, test_signif_C21_logalpha_exp)
+rownames(tab_signif_C_logalpha_exp)[nrow(tab_signif_C_logalpha_exp)] <- "logalpha"
+
+
+## -- observed, log alpha
+test_signif_C12_logalpha_obs_beta <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_logalpha$SE_obs_beta, 
+                                                 my_p_est= test_NB_ZT$p_beta_MLE)
+test_signif_C22_logalpha_obs <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_logalpha$SE_obs_logalpha, 
+                                            my_p_est= log(test_NB_ZT$p_alpha_MLE))
+
+test_signif_C_logalpha_obs <- rbind(test_signif_C12_logalpha_obs_beta, test_signif_C22_logalpha_obs)
+rownames(test_signif_C_logalpha_obs)[nrow(test_signif_C_logalpha_obs)] <- "logalpha"
+colnames(test_signif_C_logalpha_obs) <- paste0(colnames(test_signif_C_logalpha_obs),"_obs")
+
+## -- assemble
+tab_signif_C_logalpha <- cbind(tab_signif_C_logalpha_exp, test_signif_C_logalpha_obs[,-1])
+tab_signif_C_logalpha_just_alpha <- tab_signif_C_logalpha[nrow(tab_signif_C_logalpha), ]
+
+## -- Expected, log theta
+test_signif_C11_logtheta_exp_beta <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expected_all_logtheta$SE_expected_beta, 
+                                                 my_p_est= test_NB_ZT$p_beta_MLE)
+test_signif_C21_logtheta_exp <- myMLEsignif(my_SE = test_NB_ZT$SE_expected$SE_expected_all_logtheta$SE_expected_logtheta, 
+                                            my_p_est= log(1/test_NB_ZT$p_alpha_MLE))
+
+tab_signif_C_logtheta_exp <- rbind(test_signif_C11_logtheta_exp_beta , test_signif_C21_logtheta_exp)
+rownames(tab_signif_C_logtheta_exp )[nrow(tab_signif_C_logtheta_exp)] <- "logtheta"
+
+## -- observed log theta
+test_signif_C12_logtheta_obs_beta <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_logtheta$SE_obs_beta, 
+                                                 my_p_est= test_NB_ZT$p_beta_MLE)
+test_signif_C22_logtheta_obs <- myMLEsignif(my_SE = test_NB_ZT$SE_oberved$SE_obs_all_logtheta$SE_obs_logtheta, 
+                                            my_p_est= log(1/test_NB_ZT$p_alpha_MLE))
+
+test_signif_C_logtheta_obs <- rbind(test_signif_C12_logtheta_obs_beta, test_signif_C22_logtheta_obs)
+rownames(test_signif_C_logtheta_obs)[nrow(test_signif_C_logtheta_obs)] <- "logtheta"
+colnames(test_signif_C_logtheta_obs) <- paste0(colnames(test_signif_C_logtheta_obs),"_obs")
+
+
+## -- assemble
+tab_signif_C_logtheta <- cbind(tab_signif_C_logtheta_exp, test_signif_C_logtheta_obs[,-1])
+tab_signif_C_logtheta_just_theta <- tab_signif_C_logtheta[nrow(tab_signif_C_logtheta), ]
+
 
 
 
 ## c) Compare with pre-built                                 ####
+## --- countreg                                ####
+
+obj_NB_cr_ZT <- countreg::zerotrunc(g_DISRUPTIONS ~.,
+                                    dist = "negbin",
+                                    data= myData)
+
+
+obj_NB_cr_ZT $coefficients
+obj_NB_cr_ZT $coefficients.theta                        # this is ln alpha
+
+summary(obj_NB_cr_ZT )[1]
+summary(obj_NB_cr_ZT )[2]
+
+out_countreg_zt <- as.data.frame(summary(obj_NB_cr_ZT )[1])
+
+countreg_C_fulltab_beta <- out_countreg_zt[1:(nrow(out_countreg_zt)-1), 1:2, drop = FALSE]
+countreg_C_fulltab_logalpha <- out_countreg_zt[nrow(out_countreg_zt), 1:2, drop = FALSE]
+
+countreg_C_beta <-  countreg_C_fulltab_beta[,1,drop = FALSE]
+countreg_C_beta_SE <-  countreg_C_fulltab_beta[,2,drop = FALSE]
+countreg_C_logalpha <- countreg_C_fulltab_logalpha$coefficients.theta.Estimate
+countreg_C_logalpha_SE <- countreg_C_fulltab_logalpha$coefficients.theta.Std..Error
+
+
 ## --- GAMLSS                                  ####
 
 ## As in Hilbe (2011) Ch. 11
@@ -1715,11 +2161,26 @@ alpha_gamlss_ZT <- 1/exp(obj_NB_gam_ZT$sigma.coefficients)
 
 summary(obj_NB_gam_ZT)
 
-## extract standar errors
+## extract estimators
+gamlss_C_beta <- obj_NB_gam_ZT$mu.coefficients
+gamlss_C_logtheta <- obj_NB_gam_ZT$sigma.coefficients                                 # "as is" output is ln theta
+gamlss_C_theta_computed <- exp(obj_NB_gam_ZT$sigma.coefficients)
+gamlss_C_alpha_computed <- 1/gamlss_C_theta_computed 
+
+
+## extract standard errors (workaround)
 var_gamlss_ZT <- vcov(obj_NB_gam_ZT)
 var_gamlss_coeff_ZT <- diag(var_gamlss_ZT[1:(nrow(var_gamlss_ZT)-1), 1:(ncol(var_gamlss_ZT)-1)])
-var_gamlss_logTheta_ZT <- diag(var_gamlss_ZT)[nrow(var_gamlss_ZT)]
-SE_gamlss_ZT <- sqrt(var_gamlss_coeff_ZT)
+var_gamlss_logtheta_ZT <- diag(var_gamlss_ZT)[nrow(var_gamlss_ZT)]
+gamlss_C_beta_SE <- sqrt(var_gamlss_coeff_ZT)
+gamlss_C_logtheta_SE <- sqrt(var_gamlss_logtheta_ZT)
+
+
+
+
+
+
+
 
 ## --- VGAM                                    ####
 
@@ -1735,51 +2196,121 @@ vgam_alpha_ZT <- exp(obj_NB_vgam_ZT@coefficients[2])
 coef(obj_NB_vgam_ZT, matrix = TRUE)
 
 var_vgam_ZT <- vcov(obj_NB_vgam_ZT)
-vgam_beta_sE_ZT <- round(sqrt(diag(var_vgam_ZT)[c(1,3:length(obj_NB_vgam_ZT@coefficients))]),5)
+vgam_C_beta <- obj_NB_vgam_ZT@coefficients[c(1,3:length(obj_NB_vgam_ZT@coefficients))]
+vgam_C_beta_sE <- round(sqrt(diag(var_vgam_ZT)[c(1,3:length(obj_NB_vgam_ZT@coefficients))]),5)
 
-vgam_alpha_ZT <- exp(obj_NB_vgam_ZT@coefficients[2])
-vgam_lnAlpha_SE_ZT <- sqrt(diag(var_vgam_ZT)[2]) 
+vgam_C_alpha <- exp(obj_NB_vgam_ZT@coefficients[2])
+vgam_C_logalpha <- (obj_NB_vgam_ZT@coefficients[2])
+vgam_C_logalpha_SE <- sqrt(diag(var_vgam_ZT)[2])   
 
 ## --- Table comparative                       ####
-tab_pre_built_ZT  <-  cbind.data.frame("n.a.", "n.a.")
-tab_pre_built_GAMLSS_ZT  <- round(cbind.data.frame(obj_NB_gam_ZT$mu.coefficients, SE_gamlss_ZT),5)
-tab_pre_built_VGAM_ZT <- round(cbind.data.frame(vgam_beta_ZT, vgam_beta_sE_ZT),5 )
-tab_fromScratch_ZT  <- round(cbind.data.frame(test_NB_ZT$p_beta_MLE, 
-                                              test_NB_ZT$SE_expected$SE_expected_all_theta$SE_expected_beta,  ## note: the SE for beta change slighly in the ZT spec depending on whether we used theta or alpha. For the table i will for theta 
-                                              test_NB_ZT$SE_oberved$SE_obs_all_theta$SE_obs_beta),5)
 
-tab_pre_built_alpha_ZT  <- cbind.data.frame("n.a.", "n.a.")
-tab_pre_built_alpha_GAMLSS_ZT  <- cbind.data.frame(round(alpha_gamlss_ZT,5), "n.a.")
-tab_pre_built_alpha_VGAM_ZT <- cbind.data.frame(round(vgam_alpha_ZT,5), "n.a.")
-tab_fromScratch_alpha_ZT  <- round(cbind.data.frame(test_NB_ZT$p_alpha_MLE, 
-                                                    test_NB_ZT$SE_expected$SE_expeted_all_alpha$SE_expected_alpha,
-                                                    test_NB_ZT$SE_oberved$SE_obs_all_alpha$SE_obs_alpha),5)
+tab_fromScratch_ZT <- rbind(tab_signif_C_alpha, 
+                            tab_signif_C_dp_just_theta,
+                            tab_signif_C_logalpha_just_alpha,
+                            tab_signif_C_logtheta_just_theta
+)
 
-tab_pre_built_theta_ZT <- cbind.data.frame("n.a.", "n.a.")
-tab_pre_built_theta_GAMLSS_ZT <- cbind.data.frame(round(exp(obj_NB_gam_ZT$sigma.coefficients),5), "n.a.")
-tab_pre_built_theta_VGAM_ZT <-  cbind.data.frame(round(1/vgam_alpha_ZT,5), "n.a.")
-tab_fromScratch_theta_ZT <- round(cbind.data.frame(1/test_NB_ZT$p_alpha_MLE, 
-                                                   test_NB_ZT$SE_expected$SE_expected_all_theta$SE_expected_theta,
-                                                   test_NB_ZT$SE_oberved$SE_obs_all_theta$SE_obs_theta),5)
+tab_pre_built_MASS_ZT  <-  cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_countreg_ZT <- round(countreg_C_fulltab_beta[,c(1,2),drop = FALSE], 5)
+tab_pre_built_GAMLSS_ZT <-  round(cbind.data.frame(gamlss_C_beta, gamlss_C_beta_SE),5)
+tab_pre_built_VGAM_ZT <- round(cbind.data.frame(vgam_C_beta, vgam_C_beta_sE),5 )
 
+tab_pre_built_alpha_MASS_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_countreg_ZT <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_GAMLSS_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_alpha_VGAM_ZT <- cbind.data.frame("n.a.", "n.a.")
 
-colnames(tab_fromScratch_ZT)  <- c("Estimate", "SE expected", "SE observed")
-colnames(tab_pre_built_ZT) <- paste0(c("glmnb_"),colnames(tab_pre_built_ZT))
+tab_pre_built_theta_MASS_ZT <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_countreg_ZT <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_GAMLSS_ZT <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_theta_VGAM_ZT <-  cbind.data.frame("n.a.", "n.a.")
+
+tab_pre_built_logalpha_MASS_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_countreg_ZT  <- round(countreg_C_fulltab_logalpha[,c(1:2)],5)
+tab_pre_built_logalpha_GAMLSS_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logalpha_VGAM_ZT  <-  cbind.data.frame(round(vgam_C_logalpha,5), round(vgam_C_logalpha_SE,5))
+
+tab_pre_built_logtheta_MASS_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_countreg_ZT  <- cbind.data.frame("n.a.", "n.a.")
+tab_pre_built_logtheta_GAMLSS_ZT  <- cbind.data.frame(round(gamlss_C_logtheta,5), round(gamlss_C_logtheta_SE,5))
+tab_pre_built_logtheta_VGAM_ZT  <-  cbind.data.frame("n.a.", "n.a.")
+
+colnames(tab_pre_built_MASS_ZT) <- paste0(c("glmnb_"),colnames(tab_pre_built_MASS_ZT))
+colnames(tab_pre_built_countreg_ZT) <- c("countreg_coeff", "countreg_SE")
 colnames(tab_pre_built_GAMLSS_ZT) <- paste0(c("gamlss_coeff", "gamlss_SE"))
 colnames(tab_pre_built_VGAM_ZT) <- c("vglm_coeff", "vglm_SE")
 
-a <- cbind.data.frame(tab_fromScratch_ZT, tab_pre_built_ZT, tab_pre_built_GAMLSS_ZT, tab_pre_built_VGAM_ZT)
-b <- cbind.data.frame(tab_fromScratch_alpha_ZT, tab_pre_built_alpha_ZT, tab_pre_built_alpha_GAMLSS_ZT, tab_pre_built_alpha_VGAM_ZT)
-c <- cbind.data.frame(tab_fromScratch_theta_ZT, tab_pre_built_theta_ZT, tab_pre_built_theta_GAMLSS_ZT, tab_pre_built_theta_VGAM_ZT)
+a <- cbind.data.frame( tab_pre_built_MASS_ZT, tab_pre_built_countreg_ZT, tab_pre_built_GAMLSS_ZT, tab_pre_built_VGAM_ZT)
+b <- cbind.data.frame( tab_pre_built_alpha_MASS_ZT, tab_pre_built_alpha_countreg_ZT, tab_pre_built_alpha_GAMLSS_ZT, tab_pre_built_alpha_VGAM_ZT)
+c <- cbind.data.frame( tab_pre_built_theta_MASS_ZT, tab_pre_built_theta_countreg_ZT, tab_pre_built_theta_GAMLSS_ZT, tab_pre_built_theta_VGAM_ZT)
+d <- cbind.data.frame( tab_pre_built_logalpha_MASS_ZT, tab_pre_built_logalpha_countreg_ZT, tab_pre_built_logalpha_GAMLSS_ZT, tab_pre_built_logalpha_VGAM_ZT )
+e <- cbind.data.frame( tab_pre_built_logtheta_MASS_ZT, tab_pre_built_logtheta_countreg_ZT, tab_pre_built_logtheta_GAMLSS_ZT, tab_pre_built_logtheta_VGAM_ZT)
 
-colnames(c) <- colnames(b) <- colnames(a)
+colnames(e) <- colnames(d) <- colnames(c) <- colnames(b) <- colnames(a)
 rownames(b) <- "alpha"
 rownames(c) <- "theta"
+rownames(d) <- "log alpha"
+rownames(e) <- "log theta"
 
-myTab4viz_ZT <- rbind.data.frame(a, b, c)
+tab_pre_built_ZT <- rbind.data.frame(a, b, c, d, e)
+myTab4viz_ZT <- cbind(tab_fromScratch_ZT, tab_pre_built_ZT)
 
 ## Generate LaTeX export
 library(kableExtra)
 kbl(myTab4viz_ZT, format = "latex")
 
 
+##                                                           ####
+## Additional metrics (discussion section)                   ####
+## --- AIC                                         ####
+ll_base <- test_NB$log_likelihood
+ll_offs <- test_NB_offset$log_likelihood
+ll_ZT <- test_NB_ZT$log_likelihood
+
+
+AIC_base <-  as.numeric(-2*ll_base+2*(n_regressors))
+AIC_offs <- as.numeric(-2*ll_offs+2*(n_regressors - 1))
+AIC_ZT <- as.numeric(-2*ll_ZT+2*(n_regressors))
+
+## --- IRR ZT                                      ####
+
+p_lambda <- test_NB_ZT$p_lambda_MLE 
+p_alpha <- test_NB_ZT$p_alpha_MLE
+p_theta <- 1/p_alpha
+
+if(!zerotrunc){
+  something_ZT <- 1
+} else {
+  ## Grogger and Carson 1991 eq 21 give the derivative that usually underpins IRR for ZTNB but it contains some issues
+  ## -- from my calculations (see ZTNB powerpoint deck):  d ln E[Y|Y>0] \ d x = beta * something.
+  ## -- something = 1 - E[Y|Y>0]/(1+theta lambda)^(alpha + 1)
+  ## -- so: exp(beta) = (d E[Y|Y>0] \ d x)  / something ...is what we call IRR in ZTNB 
+  mu <- E_NB(p_lambda, p_alpha, rate_param = rate_param , offset_feat = offset_feat, offset_feat_value = offset_feat_value, zerotrunc = zerotrunc)
+  a <- 1 + p_theta*p_lambda
+  something_ZT_4_beta <- (1 - mu/a^(p_alpha + 1))                                     # d log EY dx = something_ZT * beta 
+  something_ZT_4_expbeta <-  mu/a^(p_alpha + 1)                                         # d log EY dx = exp(beta) * exp (-something_ZT * beta) 
+}
+
+cbind.data.frame(myData$g_DISRUPTIONS, test_NB_ZT$p_mean, something_ZT_4_beta, something_ZT_4_expbeta)
+
+IRR_BIO <- exp(tab_signif_C_exp[4,1])
+perc_fewer_y <- 1-IRR_BIO
+IRR_DUR <- exp(tab_signif_C_exp[2,1])
+perc_more_y <-  IRR_DUR - 1
+IRR_SUB <- exp(tab_signif_C_exp[3,1])
+
+IRR_BIO_ZT_correction1 <- exp(tab_signif_C_exp[4,1]*something_ZT_4_beta)
+IRR_BIO_ZT_correction2 <- IRR_BIO*exp(-something_ZT_4_expbeta*tab_signif_C_exp[4,1])
+all.equal(IRR_BIO_ZT_correction1, IRR_BIO_ZT_correction2)
+
+quantile(exp(tab_signif_C_exp[4,1]*something_ZT_4_beta))
+
+IRR_DUR_ZT_correction1 <- exp(tab_signif_C_exp[2,1]*something_ZT_4_beta)
+IRR_DUR_ZT_correction2 <- IRR_DUR*exp( (-something_ZT_4_expbeta)*tab_signif_C_exp[2,1])
+
+quantile(exp(tab_signif_C_exp[2,1]*something_ZT_4_beta))
+
+IRR_SUB_ZT_correction1 <- exp(tab_signif_C_exp[3,1]*something_ZT_4_beta)
+IRR_SUB_ZT_correction2 <- IRR_SUB*exp( (-something_ZT_4_expbeta)*tab_signif_C_exp[3,1])
+quantile(exp( (-something_ZT_4_expbeta)*tab_signif_C_exp[3,1]))
